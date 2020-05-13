@@ -6,8 +6,8 @@ _used_tables=()
 _used_triggers=()
 _used_functions=()
 _used_procedures=()
-_test_array=(temp_sql_scripts/test_1.sql temp_sql_scripts/test_2.sql temp_sql_scripts/test_3.sql)
-touch output.sql
+# _test_array=(temp_sql_scripts/test_1.sql temp_sql_scripts/test_2.sql temp_sql_scripts/test_3.sql)
+_test_array=( $( mysql --batch mysql -uroot -pmed123 -N -e "SELECT script_name  FROM X.scripts WHERE script_plateform='encour'" ) )
 function union_of_arrays() { 
 	unset _union_match
 	_union_match=()
@@ -44,15 +44,65 @@ do
 	done
 	for db in ${_used_dbs[@]}
 	do
+		_procedure_names=( $( mysql --batch mysql -uroot -pmed123 -N -e "SELECT SPECIFIC_NAME FROM INFORMATION_SCHEMA.ROUTINES where ROUTINE_SCHEMA='${db}' AND ROUTINE_TYPE='PROCEDURE';" ) )
+		union_of_arrays _currentScript _procedure_names 
+		_used_procedures+=("${_union_match[@]/#/$db.}")
+	done
+	_used_procedures=($(printf "%s\n" "${_used_procedures[@]}" | sort -u | tr '\n' ' '))
+	_additionnal_scripts=()
+	# printf '%s\n' "${_used_procedures[@]}"
+	for procedure in ${_used_procedures[@]}
+	do
+		set -f        # disable globbing
+		IFS=$'\n'     # set field separator to NL (only)
+		# echo "show create procedure ${procedure};"
+		procedure_creation=( $( mysql -uroot -pmed123 -N -e "show create procedure ${procedure};" ) )
+		if [ ${#procedure_creation[@]} != 0 ]; then
+		IFS=$'\t' read -r col1 col2 col3 col4  <<< "${procedure_creation[0]}"
+		_procedure_output="${procedure} ${col3}"
+		fi
+		_additionnal_scripts+=($(echo $_procedure_output | sed 's/[^0-9  _  a-z  A-Z]/ /g' | tr '[:upper:]' '[:lower:]'))
+		printf '%s\n' "hhhhhhhhhhhhh${_additionnal_scripts[@]}"
+	done
+		IFS=' '
+	for db in ${_used_dbs[@]}
+	do
+		_function_names=( $( mysql --batch mysql -uroot -pmed123 -N -e "SELECT SPECIFIC_NAME FROM INFORMATION_SCHEMA.ROUTINES where ROUTINE_SCHEMA='${db}' AND ROUTINE_TYPE='fUNCTION';" ) )
+		union_of_arrays _currentScript _function_names 
+		_used_functions+=("${_union_match[@]/#/$db.}")
+	done
+	_used_functions=($(printf "%s\n" "${_used_functions[@]}" | sort -u | tr '\n' ' '))	
+	_currentScript+=${_additionnal_scripts[@]}
+	for db in ${_used_dbs[@]}
+	do
 		_table_names=( $( mysql --batch mysql -uroot -pmed123 -N -e "select TABLE_NAME from information_schema.tables where TABLE_TYPE='BASE TABLE' AND TABLE_SCHEMA='${db}';" ) )
 
 		union_of_arrays _currentScript _table_names 
 		_used_tables+=("${_union_match[@]/#/$db.}")
 	done	
 	_used_tables=($(printf "%s\n" "${_used_tables[@]}" | sort -u | tr '\n' ' '))
-	
-	currentScript=()
+
+
+	echo CURRENTLY PROCESSING ${script} IT SIZE IS "${#_currentScript[@]}"
+	printf '%s\n' "${_currentScript[@]}"
+	_currentScript=()
 done
+
+
+
+
+
+for constraint_table in ${_used_tables[@]}
+do
+	current_table=(${constraint_table//./ })
+	# echo was here
+	_constraint_tables=( $( mysql --batch mysql -uroot -pmed123 -N -e "SELECT CONCAT(TABLE_SCHEMA, '.', REFERENCED_TABLE_NAME) FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = '${current_table[0]}' AND TABLE_NAME = '${current_table[1]}' AND REFERENCED_TABLE_NAME != 'null';" ) )
+	_used_tables+=(${_constraint_tables[@]})
+done
+_used_tables=($(printf "%s\n" "${_used_tables[@]}" | sort -u | tr '\n' ' '))
+printf '%s\n' "${_constraint_tables[@]}"
+
+
 
 
 for db in ${_used_dbs[@]}
@@ -67,8 +117,10 @@ do
 	set -f        # disable globbing
 	IFS=$'\n'     # set field separator to NL (only)
 	table_creation=( $( mysql -uroot -pmed123 -N -e "show create table ${table};" ) )
+	if [ ${#table_creation[@]} != 0 ]; then	
 	IFS=$'\t' read -r col1 col2   <<< "${table_creation[0]}"
 	_output="${_output} \nUSE $db_temp_name;\n${col2};"
+	fi
 done
 for view in ${_used_views[@]}
 do
@@ -81,25 +133,33 @@ do
 	if [ ${#view_creation[@]} != 0 ]; then
 	IFS=$'\t' read -r col1 col2 col3   <<< "${view_creation[0]}"
 	_output="${_output} \nUSE $db_temp_name;\n${col2};"
-	else
-		echo "Oops, something went wrong..."
 	fi
 done
-printf '%b ' "${_output[@]}"> output.sql
-# echo Dbs to create:  "${_used_dbs[@]}"
-# echo Tables to create:  "${_used_tables[@]}"
-# echo Views to create: "${_used_views[@]}"
- #_used_tables=($(printf "%s\n" "${_used_tables[@]}" | sort -u | tr '\n' ' '))
-
-# _used_tables=($(printf "%s\n" "${_used_tables[@]}" | sort -u | tr '\n' ' '))
-		# if [[ (${_used_tables[0]} = "db2.car") ]]; then
-            # echo true
-       
-		# else 
-		# echo false
-		# fi
-# printf '%s\n' "${_used_tables[@]}"
-#unique=($(printf _used_viewss\n" "${used_dbs[@]}" | sort -u | tr '\n' ' '))
-#echo "${used_dbs[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '
-#unique=($(printf "%s\n" "${used_dbs[@]}" | sort -u | tr '\n' ' '))
-#echo ${used_dbs[1]}
+for procedure in ${_used_procedures[@]}
+do
+	IFS=' '
+	current_procedure=(${procedure//./ })
+	db_temp_name=${current_procedure[0]}
+	set -f        # disable globbing
+	IFS=$'\n'     # set field separator to NL (only)
+	procedure_creation=( $( mysql -uroot -pmed123 -N -e "show create procedure ${procedure};" ) )
+	if [ ${#procedure_creation[@]} != 0 ]; then
+	IFS=$'\t' read -r col1 col2 col3 col4  <<< "${procedure_creation[0]}"
+	_output="${_output} \nUSE $db_temp_name;\n delimiter // \n${col3}; // \n delimiter ; "
+	fi
+done
+for function in ${_used_functions[@]}
+do
+	IFS=' '
+	current_function=(${function//./ })
+	db_temp_name=${current_function[0]}
+	set -f        # disable globbing
+	IFS=$'\n'     # set field separator to NL (only)
+	function_creation=( $( mysql -uroot -pmed123 -N -e "show create function ${function};" ) )
+	if [ ${#function_creation[@]} != 0 ]; then
+	IFS=$'\t' read -r col1 col2 col3 col4  <<< "${function_creation[0]}"
+	_output="${_output} \nUSE $db_temp_name; \n delimiter // \n ${col3}// \n delimiter ; "
+	fi
+done
+touch output.sql
+printf '%b\n' "${_output[@]}"> output.sql
